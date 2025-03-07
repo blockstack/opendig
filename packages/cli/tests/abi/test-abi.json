@@ -69,9 +69,7 @@
     {
       "name": "test-func-buffer-argument",
       "access": "public",
-      "args": [
-        { "name": "bufferArg", "type": { "buffer": { "length": 20 } } }
-      ],
+      "args": [{ "name": "bufferArg", "type": { "buffer": { "length": 20 } } }],
       "outputs": { "type": { "response": { "ok": "bool", "error": "none" } } }
     }
   ],

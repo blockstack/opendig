@@ -9,6 +9,7 @@ import {
   ClarityAbi,
   ClarityValue,
   ContractCallPayload,
+  createContractCallPayload,
   cvToJSON,
   cvToString,
   estimateTransactionByteLength,
@@ -789,6 +790,34 @@ async function contractDeploy(_network: CLINetworkAdapter, args: string[]): Prom
     });
 }
 
+/** @internal */
+function parseDirectFunctionArgs(functionArgsStr: string): ClarityValue[] {
+  return functionArgsStr
+    .split('')
+    .reduce(
+      (acc, char) => {
+        if (char === '(') acc.p++;
+        if (char === ')') acc.p--;
+        if (char === ',' && !acc.p) {
+          acc.segs.push('');
+        } else {
+          acc.segs[acc.segs.length - 1] += char;
+        }
+        return acc;
+      },
+      { p: 0, segs: [''] }
+    )
+    .segs.filter(arg => arg.trim())
+    .map(arg => Cl.parse(arg.trim()));
+}
+
+// Get function arguments via interactive prompts
+async function getInteractiveFunctionArgs(abiArgs: ClarityFunctionArg[]): Promise<ClarityValue[]> {
+  const prompts = makePromptsFromArgList(abiArgs);
+  const answers = await prompt(prompts);
+  return parseClarityFunctionArgAnswers(answers, abiArgs);
+}
+
 /*
  * Call a Clarity smart contract function.
  * args:
@@ -806,73 +835,71 @@ async function contractFunctionCall(_network: CLINetworkAdapter, args: string[])
   const fee = BigInt(args[3]);
   const nonce = BigInt(args[4]);
   const privateKey = args[5];
+  const functionArgsStr = args.length > 6 ? args[6] : undefined;
 
-  // temporary hack to use network config from stacks-transactions lib
   const network = _network.isMainnet() ? STACKS_MAINNET : STACKS_TESTNET;
 
-  let abi: ClarityAbi;
-  let abiArgs: ClarityFunctionArg[];
-  let functionArgs: ClarityValue[] = [];
+  const abi = await fetchAbi({ contractAddress, contractName, network });
+  const filteredFn = abi.functions.filter(fn => fn.name === functionName);
 
-  return fetchAbi({ contractAddress, contractName, network })
-    .then(responseAbi => {
-      abi = responseAbi;
-      const filtered = abi.functions.filter(fn => fn.name === functionName);
-      if (filtered.length === 1) {
-        abiArgs = filtered[0].args;
-        return makePromptsFromArgList(abiArgs);
-      } else {
-        return null;
-      }
-    })
-    .then(prompts => prompt(prompts!))
-    .then(answers => {
-      functionArgs = parseClarityFunctionArgAnswers(answers, abiArgs);
+  if (filteredFn.length !== 1) {
+    throw new Error(`Function ${functionName} not found in contract ${contractName}`);
+  }
 
-      const options: SignedContractCallOptions = {
-        contractAddress,
-        contractName,
-        functionName,
-        functionArgs,
-        senderKey: privateKey,
-        fee,
-        nonce,
-        network,
-        postConditionMode: PostConditionMode.Allow,
-      };
+  const abiArgs = filteredFn[0].args;
+  const functionArgs = functionArgsStr
+    ? parseDirectFunctionArgs(functionArgsStr)
+    : await getInteractiveFunctionArgs(abiArgs);
 
-      return makeContractCall(options);
-    })
-    .then(tx => {
-      if (!validateContractCall(tx.payload as ContractCallPayload, abi)) {
-        throw new Error('Failed to validate function arguments against ABI');
-      }
+  const payload = createContractCallPayload(
+    contractAddress,
+    contractName,
+    functionName,
+    functionArgs
+  );
+  validateContractCall(payload, abi);
 
-      if (estimateOnly) {
-        return fetchFeeEstimateTransaction({
-          payload: serializePayload(tx.payload),
-          estimatedLength: estimateTransactionByteLength(tx),
-        }).then(costs => costs[1].fee.toString(10));
-      }
+  const options: SignedContractCallOptions = {
+    contractAddress,
+    contractName,
+    functionName,
+    functionArgs,
+    senderKey: privateKey,
+    fee,
+    nonce,
+    network,
+    postConditionMode: PostConditionMode.Allow,
+  };
 
-      if (txOnly) {
-        return Promise.resolve(tx.serialize());
-      }
+  const tx = await makeContractCall(options);
 
-      return broadcastTransaction({ transaction: tx, network })
-        .then(response => {
-          if (response.hasOwnProperty('error')) {
-            return response;
-          }
-          return {
-            txid: `0x${tx.txid()}`,
-            transaction: generateExplorerTxPageUrl(tx.txid(), network),
-          };
-        })
-        .catch(error => {
-          return error.toString();
-        });
+  if (!validateContractCall(tx.payload as ContractCallPayload, abi)) {
+    throw new Error('Failed to validate function arguments against ABI');
+  }
+
+  if (estimateOnly) {
+    const costs = await fetchFeeEstimateTransaction({
+      payload: serializePayload(tx.payload),
+      estimatedLength: estimateTransactionByteLength(tx),
     });
+    return costs[1].fee.toString(10);
+  }
+
+  if (txOnly) return tx.serialize();
+
+  try {
+    const response = await broadcastTransaction({ transaction: tx, network });
+    if ('error' in response) {
+      return JSONStringify(response);
+    }
+    return JSONStringify({
+      txid: `0x${tx.txid()}`,
+      transaction: generateExplorerTxPageUrl(tx.txid(), network),
+    });
+  } catch (error) {
+    if (error instanceof Error) return error.message;
+    return 'Unknown error occurred';
+  }
 }
 
 /*
@@ -2144,5 +2171,6 @@ export const testables =
         migrateSubdomains,
         preorder,
         register,
+        parseDirectFunctionArgs,
       }
     : undefined;
