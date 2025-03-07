@@ -5,11 +5,13 @@ import {
   FungiblePostCondition,
   NonFungibleComparator,
   NonFungiblePostCondition,
+  PostCondition,
   StxPostCondition,
 } from './postcondition-types';
 import { AddressString, AssetString, ContractIdString } from './types';
-import {} from './postcondition';
 import { parseContractId, validateStacksAddress } from './utils';
+import { deserializePostConditionWire } from './wire';
+import { wireToPostCondition } from './postcondition';
 
 /// `Pc.` Post Condition Builder
 //
@@ -264,6 +266,29 @@ function parseNft(nftAssetName: AssetString) {
     throw new Error(`Invalid fully-qualified nft asset name: ${nftAssetName}`);
   const [address, name] = parseContractId(principal);
   return { contractAddress: address, contractName: name, tokenName };
+}
+
+/**
+ * Deserializes a serialized post condition hex string into a post condition object
+ * @param hex - Post condition hex string
+ * @returns Deserialized post condition
+ * @example
+ * ```ts
+ * import { Pc } from '@stacks/transactions';
+ *
+ * const hex = '00021600000000000000000000000000000000000000000200000000000003e8'
+ * const postCondition = Pc.fromHex(hex);
+ * // {
+ * //   type: 'stx-postcondition',
+ * //   address: 'SP000000000000000000002Q6VF78',
+ * //   condition: 'gt',
+ * //   amount: '1000'
+ * // }
+ * ```
+ */
+export function fromHex(hex: string): PostCondition {
+  const wire = deserializePostConditionWire(hex);
+  return wireToPostCondition(wire);
 }
 
 /**

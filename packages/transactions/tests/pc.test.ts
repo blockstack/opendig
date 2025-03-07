@@ -417,4 +417,20 @@ describe('pc -- post condition builder', () => {
       });
     });
   });
+
+  describe('fromHex function', () => {
+    test('deserializes hex string to post condition object', () => {
+      const hex = '00021600000000000000000000000000000000000000000200000000000003e8';
+      const postCondition = Pc.fromHex(hex);
+
+      const expectedPostCondition: StxPostCondition = {
+        type: 'stx-postcondition',
+        address: 'SP000000000000000000002Q6VF78',
+        condition: 'gt',
+        amount: '1000',
+      };
+
+      expect(postCondition).toEqual(expectedPostCondition);
+    });
+  });
 });

@@ -4,8 +4,8 @@ import {
   ContractPrincipalWire,
   FungiblePostConditionWire,
   NonFungiblePostConditionWire,
+  Pc,
   STXPostConditionWire,
-  StacksWireType,
   addressToString,
   deserializeTransaction,
 } from '../src';
@@ -16,7 +16,14 @@ import {
   PostConditionPrincipalId,
   PostConditionType,
 } from '../src/constants';
-import { postConditionToHex, postConditionToWire } from '../src/postcondition';
+import {
+  conditionByteToType,
+  conditionTypeToByte,
+  postConditionToHex,
+  postConditionToWire,
+  wireToPostCondition,
+} from '../src/postcondition';
+import { StacksWireType, parseAssetString, parsePrincipalString } from '../src/wire';
 import { serializeDeserialize } from './macros';
 
 test('STX post condition serialization and deserialization', () => {
@@ -223,4 +230,139 @@ describe('origin postcondition', () => {
       expect(pc.principal.prefix).toBe(PostConditionPrincipalId.Origin);
     }).not.toThrow();
   });
+});
+
+describe('wireToPostCondition', () => {
+  const TEST_CASES = [
+    {
+      name: 'STX post condition',
+      postConditionWire: {
+        type: StacksWireType.PostCondition,
+        conditionType: PostConditionType.STX,
+        principal: parsePrincipalString('SP2JXKMSH007NPYAQHKJPQMAQYAD90NQGTVJVQ02B'),
+        conditionCode: FungibleConditionCode.GreaterEqual,
+        amount: 1000000n,
+      },
+      expected: Pc.principal('SP2JXKMSH007NPYAQHKJPQMAQYAD90NQGTVJVQ02B')
+        .willSendGte(1000000n)
+        .ustx(),
+    },
+    {
+      name: 'STX post condition with origin',
+      postConditionWire: {
+        type: StacksWireType.PostCondition,
+        conditionType: PostConditionType.STX,
+        principal: { type: StacksWireType.Principal, prefix: PostConditionPrincipalId.Origin },
+        conditionCode: FungibleConditionCode.Equal,
+        amount: 2000000n,
+      },
+      expected: Pc.origin().willSendEq(2000000n).ustx(),
+    },
+    {
+      name: 'Fungible post condition',
+      postConditionWire: {
+        type: StacksWireType.PostCondition,
+        conditionType: PostConditionType.Fungible,
+        principal: parsePrincipalString('SP2JXKMSH007NPYAQHKJPQMAQYAD90NQGTVJVQ02B'),
+        conditionCode: FungibleConditionCode.GreaterEqual,
+        amount: 1000000n,
+        asset: parseAssetString(
+          'SP2ZP4GJDZJ1FDHTQ963F0292PE9J9752TZJ68F21.contract_name::asset_name'
+        ),
+      },
+      expected: Pc.principal('SP2JXKMSH007NPYAQHKJPQMAQYAD90NQGTVJVQ02B')
+        .willSendGte(1000000n)
+        .ft('SP2ZP4GJDZJ1FDHTQ963F0292PE9J9752TZJ68F21.contract_name', 'asset_name'),
+    },
+    {
+      name: 'Non-fungible post condition',
+      postConditionWire: {
+        type: StacksWireType.PostCondition,
+        conditionType: PostConditionType.NonFungible,
+        principal: parsePrincipalString('SP2JXKMSH007NPYAQHKJPQMAQYAD90NQGTVJVQ02B.contract-name'),
+        conditionCode: NonFungibleConditionCode.DoesNotSend,
+        asset: parseAssetString(
+          'SP2ZP4GJDZJ1FDHTQ963F0292PE9J9752TZJ68F21.contract_name::asset_name'
+        ),
+        assetName: bufferCVFromString('nft_asset_name'),
+      },
+      expected: Pc.principal('SP2JXKMSH007NPYAQHKJPQMAQYAD90NQGTVJVQ02B.contract-name')
+        .willNotSendAsset()
+        .nft(
+          'SP2ZP4GJDZJ1FDHTQ963F0292PE9J9752TZJ68F21.contract_name',
+          'asset_name',
+          bufferCVFromString('nft_asset_name')
+        ),
+    },
+  ] as const;
+
+  test.each(TEST_CASES)('$name', ({ postConditionWire, expected }) => {
+    const postCondition = wireToPostCondition(postConditionWire);
+    expect(postCondition).toEqual(expected);
+
+    const roundTrip = postConditionToWire(postCondition);
+    expect(roundTrip).toEqual(postConditionWire);
+  });
+});
+
+describe('conditionTypeToByte', () => {
+  const fungibleTestCases = [
+    { name: 'eq', expectedCode: FungibleConditionCode.Equal },
+    { name: 'gt', expectedCode: FungibleConditionCode.Greater },
+    { name: 'lt', expectedCode: FungibleConditionCode.Less },
+    { name: 'gte', expectedCode: FungibleConditionCode.GreaterEqual },
+    { name: 'lte', expectedCode: FungibleConditionCode.LessEqual },
+  ] as const;
+
+  const nonFungibleTestCases = [
+    { name: 'sent', expectedCode: NonFungibleConditionCode.Sends },
+    { name: 'not-sent', expectedCode: NonFungibleConditionCode.DoesNotSend },
+  ] as const;
+
+  test.each(fungibleTestCases)(
+    'converts fungible condition $name to byte code',
+    ({ name, expectedCode }) => {
+      const result = conditionTypeToByte(name);
+      expect(result).toBe(expectedCode);
+    }
+  );
+
+  test.each(nonFungibleTestCases)(
+    'converts non-fungible condition $name to byte code',
+    ({ name, expectedCode }) => {
+      const result = conditionTypeToByte(name);
+      expect(result).toBe(expectedCode);
+    }
+  );
+});
+
+describe('conditionBytesToType', () => {
+  const fungibleTestCases = [
+    { code: FungibleConditionCode.Equal, expectedName: 'eq' },
+    { code: FungibleConditionCode.Greater, expectedName: 'gt' },
+    { code: FungibleConditionCode.Less, expectedName: 'lt' },
+    { code: FungibleConditionCode.GreaterEqual, expectedName: 'gte' },
+    { code: FungibleConditionCode.LessEqual, expectedName: 'lte' },
+  ] as const;
+
+  const nonFungibleTestCases = [
+    { code: NonFungibleConditionCode.Sends, expectedName: 'sent' },
+    { code: NonFungibleConditionCode.DoesNotSend, expectedName: 'not-sent' },
+  ] as const;
+
+  test.each(fungibleTestCases)(
+    'converts fungible condition code $code to name',
+    ({ code, expectedName }) => {
+      const result = conditionByteToType(code);
+      expect(result).toBe(expectedName);
+    }
+  );
+
+  test.each(nonFungibleTestCases)(
+    'converts non-fungible condition code $code to name',
+    ({ code, expectedName }) => {
+      const result = conditionByteToType(code);
+      expect(result).toBe(expectedName);
+    }
+  );
 });

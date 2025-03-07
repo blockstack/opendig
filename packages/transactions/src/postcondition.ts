@@ -5,29 +5,36 @@ import {
   PostConditionPrincipalId,
   PostConditionType,
 } from './constants';
-import { PostCondition, PostConditionModeName } from './postcondition-types';
 import {
+  FungibleComparator,
+  NonFungibleComparator,
+  PostCondition,
+  PostConditionModeName,
+} from './postcondition-types';
+import { AssetString } from './types';
+import {
+  AssetWire,
+  PostConditionPrincipalWire,
   PostConditionWire,
   StacksWireType,
+  addressToString,
   parseAssetString,
   parsePrincipalString,
   serializePostConditionWire,
 } from './wire';
 
-const FUNGIBLE_COMPARATOR_MAPPING = {
-  eq: FungibleConditionCode.Equal,
-  gt: FungibleConditionCode.Greater,
-  lt: FungibleConditionCode.Less,
-  gte: FungibleConditionCode.GreaterEqual,
-  lte: FungibleConditionCode.LessEqual,
-};
+/** @internal */
+enum PostConditionCodeWireType {
+  eq = FungibleConditionCode.Equal,
+  gt = FungibleConditionCode.Greater,
+  lt = FungibleConditionCode.Less,
+  gte = FungibleConditionCode.GreaterEqual,
+  lte = FungibleConditionCode.LessEqual,
 
-const NON_FUNGIBLE_COMPARATOR_MAPPING = {
-  sent: NonFungibleConditionCode.Sends,
-  'not-sent': NonFungibleConditionCode.DoesNotSend,
-};
+  sent = NonFungibleConditionCode.Sends,
+  'not-sent' = NonFungibleConditionCode.DoesNotSend,
+}
 
-/** @ignore */
 export function postConditionToWire(postcondition: PostCondition): PostConditionWire {
   switch (postcondition.type) {
     case 'stx-postcondition':
@@ -38,7 +45,7 @@ export function postConditionToWire(postcondition: PostCondition): PostCondition
           postcondition.address === 'origin'
             ? { type: StacksWireType.Principal, prefix: PostConditionPrincipalId.Origin }
             : parsePrincipalString(postcondition.address),
-        conditionCode: FUNGIBLE_COMPARATOR_MAPPING[postcondition.condition],
+        conditionCode: conditionTypeToByte(postcondition.condition) as FungibleConditionCode,
         amount: BigInt(postcondition.amount),
       };
     case 'ft-postcondition':
@@ -49,7 +56,7 @@ export function postConditionToWire(postcondition: PostCondition): PostCondition
           postcondition.address === 'origin'
             ? { type: StacksWireType.Principal, prefix: PostConditionPrincipalId.Origin }
             : parsePrincipalString(postcondition.address),
-        conditionCode: FUNGIBLE_COMPARATOR_MAPPING[postcondition.condition],
+        conditionCode: conditionTypeToByte(postcondition.condition) as FungibleConditionCode,
         amount: BigInt(postcondition.amount),
         asset: parseAssetString(postcondition.asset),
       };
@@ -61,13 +68,70 @@ export function postConditionToWire(postcondition: PostCondition): PostCondition
           postcondition.address === 'origin'
             ? { type: StacksWireType.Principal, prefix: PostConditionPrincipalId.Origin }
             : parsePrincipalString(postcondition.address),
-        conditionCode: NON_FUNGIBLE_COMPARATOR_MAPPING[postcondition.condition],
+        conditionCode: conditionTypeToByte(postcondition.condition),
         asset: parseAssetString(postcondition.asset),
         assetName: postcondition.assetId,
       };
     default:
       throw new Error('Invalid post condition type');
   }
+}
+
+export function wireToPostCondition(wire: PostConditionWire): PostCondition {
+  switch (wire.conditionType) {
+    case PostConditionType.STX:
+      return {
+        type: 'stx-postcondition',
+        address: principalWireToString(wire.principal),
+        condition: conditionByteToType(wire.conditionCode),
+        amount: wire.amount.toString(),
+      };
+    case PostConditionType.Fungible:
+      return {
+        type: 'ft-postcondition',
+        address: principalWireToString(wire.principal),
+        condition: conditionByteToType(wire.conditionCode),
+        amount: wire.amount.toString(),
+        asset: assetWireToString(wire.asset),
+      };
+    case PostConditionType.NonFungible:
+      return {
+        type: 'nft-postcondition',
+        address: principalWireToString(wire.principal),
+        condition: conditionByteToType(wire.conditionCode),
+        asset: assetWireToString(wire.asset),
+        assetId: wire.assetName,
+      };
+    default: {
+      const _exhaustiveCheck: never = wire;
+      throw new Error(`Invalid post condition type: ${_exhaustiveCheck}`);
+    }
+  }
+}
+
+/** @internal */
+export function conditionTypeToByte<T extends FungibleComparator | NonFungibleComparator>(
+  condition: T
+): T extends FungibleComparator ? FungibleConditionCode : NonFungibleConditionCode {
+  return (
+    PostConditionCodeWireType as unknown as Record<
+      T,
+      T extends FungibleComparator ? FungibleConditionCode : NonFungibleConditionCode
+    >
+  )[condition];
+}
+
+/** @internal */
+export function conditionByteToType<T extends FungibleConditionCode | NonFungibleConditionCode>(
+  wireType: T
+): T extends FungibleConditionCode ? FungibleComparator : NonFungibleComparator {
+  return (
+    PostConditionCodeWireType as unknown as Record<
+      // numerical enums are bidirectional in TypeScript
+      T,
+      T extends FungibleConditionCode ? FungibleComparator : NonFungibleComparator
+    >
+  )[wireType];
 }
 
 /**
@@ -101,4 +165,27 @@ export function postConditionModeFrom(
   if (mode === 'allow') return PostConditionMode.Allow;
   if (mode === 'deny') return PostConditionMode.Deny;
   throw new Error(`Invalid post condition mode: ${mode}`);
+}
+
+/** @internal */
+function assetWireToString(asset: AssetWire): AssetString {
+  const address = addressToString(asset.address);
+  const contractId = `${address}.${asset.contractName.content}` as const;
+  return `${contractId}::${asset.assetName.content}`;
+}
+
+/** @internal */
+function principalWireToString(principal: PostConditionPrincipalWire): string {
+  switch (principal.prefix) {
+    case PostConditionPrincipalId.Origin:
+      return 'origin';
+    case PostConditionPrincipalId.Standard:
+      return addressToString(principal.address);
+    case PostConditionPrincipalId.Contract:
+      const address = addressToString(principal.address);
+      return `${address}.${principal.contractName.content}`;
+    default:
+      const _exhaustiveCheck: never = principal;
+      throw new Error(`Invalid principal type: ${_exhaustiveCheck}`);
+  }
 }
