@@ -335,9 +335,15 @@ export const CLI_ARGS = {
           realtype: 'private_key',
           pattern: `${PRIVATE_KEY_PATTERN_ANY}`,
         },
+        {
+          name: 'function_args',
+          type: 'string',
+          realtype: 'string',
+          pattern: '.+',
+        },
       ],
       minItems: 6,
-      maxItems: 6,
+      maxItems: 7,
       help:
         'Call a function in a deployed Clarity smart contract.\n' +
         '\n' +
@@ -352,6 +358,12 @@ export const CLI_ARGS = {
         "       txid: '0x2e33ad647a9cedacb718ce247967dc705bc0c878db899fdba5eae2437c6fa1e1'," +
         "       transaction: 'https://explorer.hiro.so/txid/0x2e33ad647a9cedacb718ce247967dc705bc0c878db899fdba5eae2437c6fa1e1'" +
         '     }\n' +
+        '```\n' +
+        '\n' +
+        'You can also provide function arguments directly instead of being prompted for them:\n' +
+        '```console\n' +
+        '    $ stx call_contract_func SPBMRFRPPGCDE3F384WCJPK8PQJGZ8K9QKK7F59X contract_name' +
+        '      contract_function 1 0 "$PAYMENT" "(u100), (true), (\\"some-string\\"")\n' +
         '```\n' +
         '\n',
       group: 'Account Management',
